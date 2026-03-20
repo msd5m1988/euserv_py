@@ -249,7 +249,7 @@ install_python() {
         wget -q https://www.python.org/ftp/python/3.10.14/Python-3.10.14.tgz
         tar -xzf Python-3.10.14.tgz
         cd Python-3.10.14
-        ./configure --enable-optimizations --quiet
+        ./configure --quiet
         make -j$(nproc)
         make altinstall   # altinstall 不覆盖系统默认 python3
 
