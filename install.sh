@@ -231,29 +231,41 @@ install_docker() {
 # 安装Python环境
 install_python() {
     print_info "安装Python环境..."
-    
-    # 安装 Python 3.10（ddddocr 兼容版本）
-    if ! command -v python3.10 &> /dev/null; then
+
+    # 检查是否已有 python3.10
+    if command -v python3.10 &> /dev/null; then
+        print_success "Python3.10已安装"
+    else
         print_info "安装Python3.10..."
         apt-get update -qq
-        apt-get install -y software-properties-common -qq
-        add-apt-repository ppa:deadsnakes/ppa -y
-        apt-get update -qq
-        apt-get install -y python3.10 python3.10-distutils -qq
-        curl -sS https://bootstrap.pypa.io/get-pip.py | python3.10
+        # 安装编译依赖
+        apt-get install -y build-essential libssl-dev zlib1g-dev \
+            libncurses5-dev libncursesw5-dev libreadline-dev libsqlite3-dev \
+            libgdbm-dev libdb5.3-dev libbz2-dev libexpat1-dev liblzma-dev \
+            libffi-dev wget -qq
+
+        # 下载并编译 Python 3.10
+        cd /tmp
+        wget -q https://www.python.org/ftp/python/3.10.14/Python-3.10.14.tgz
+        tar -xzf Python-3.10.14.tgz
+        cd Python-3.10.14
+        ./configure --enable-optimizations --quiet
+        make -j$(nproc)
+        make altinstall   # altinstall 不覆盖系统默认 python3
+
         print_success "Python3.10安装完成"
-    else
-        print_success "Python3.10已安装"
+        cd /tmp && rm -rf Python-3.10.14 Python-3.10.14.tgz
     fi
-    
-    # 把 python3 / pip3 指向 3.10
-    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1
-    update-alternatives --install /usr/bin/pip3 pip3 $(which pip3.10) 1
-    
+
+    # 安装 pip for 3.10
+    if ! command -v pip3.10 &> /dev/null; then
+        curl -sS https://bootstrap.pypa.io/get-pip.py | python3.10
+    fi
+
     # 安装Python依赖
     print_info "从requirements.txt安装Python依赖..."
     if [ -f "${INSTALL_DIR}/requirements.txt" ]; then
-        pip3.10 install -r ${INSTALL_DIR}/requirements.txt --break-system-packages
+        pip3.10 install -r ${INSTALL_DIR}/requirements.txt
         print_success "Python依赖安装完成"
     else
         print_error "requirements.txt 文件不存在"
@@ -319,7 +331,7 @@ After=network.target
 Type=oneshot
 WorkingDirectory=${INSTALL_DIR}
 EnvironmentFile=${CONFIG_FILE}
-ExecStart=/usr/bin/python3.10 ${INSTALL_DIR}/euser_renew.py
+ExecStart=/usr/local/bin/python3.10 ${INSTALL_DIR}/euser_renew.py
 StandardOutput=journal
 StandardError=journal
 User=root
