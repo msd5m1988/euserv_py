@@ -232,31 +232,28 @@ install_docker() {
 install_python() {
     print_info "安装Python环境..."
     
-    # 检查Python3
-    if ! command -v python3 &> /dev/null; then
-        print_info "Python3未安装,正在安装..."
+    # 安装 Python 3.10（ddddocr 兼容版本）
+    if ! command -v python3.10 &> /dev/null; then
+        print_info "安装Python3.10..."
         apt-get update -qq
-        apt-get install -y python3 -qq
-        print_success "Python3安装完成"
+        apt-get install -y software-properties-common -qq
+        add-apt-repository ppa:deadsnakes/ppa -y
+        apt-get update -qq
+        apt-get install -y python3.10 python3.10-distutils -qq
+        curl -sS https://bootstrap.pypa.io/get-pip.py | python3.10
+        print_success "Python3.10安装完成"
     else
-        print_success "Python3已安装"
+        print_success "Python3.10已安装"
     fi
     
-    # 检查pip3
-    if ! command -v pip3 &> /dev/null; then
-        print_info "pip3未安装,正在安装..."
-        apt-get update -qq
-        apt-get install -y python3-pip -qq
-        print_success "pip3安装完成"
-    else
-        print_success "pip3已安装"
-    fi
+    # 把 python3 / pip3 指向 3.10
+    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1
+    update-alternatives --install /usr/bin/pip3 pip3 $(which pip3.10) 1
     
     # 安装Python依赖
     print_info "从requirements.txt安装Python依赖..."
     if [ -f "${INSTALL_DIR}/requirements.txt" ]; then
-        pip3 install --quiet -r ${INSTALL_DIR}/requirements.txt 2>/dev/null || \
-        pip3 install -r ${INSTALL_DIR}/requirements.txt --break-system-packages
+        pip3.10 install -r ${INSTALL_DIR}/requirements.txt --break-system-packages
         print_success "Python依赖安装完成"
     else
         print_error "requirements.txt 文件不存在"
@@ -322,7 +319,7 @@ After=network.target
 Type=oneshot
 WorkingDirectory=${INSTALL_DIR}
 EnvironmentFile=${CONFIG_FILE}
-ExecStart=/usr/bin/python3 ${INSTALL_DIR}/euser_renew.py
+ExecStart=/usr/bin/python3.10 ${INSTALL_DIR}/euser_renew.py
 StandardOutput=journal
 StandardError=journal
 User=root
@@ -784,7 +781,7 @@ After=network.target
 Type=oneshot
 WorkingDirectory=${INSTALL_DIR}
 EnvironmentFile=${CONFIG_FILE}
-ExecStart=/usr/bin/python3 ${INSTALL_DIR}/euser_renew.py
+ExecStart=/usr/bin/python3.10 ${INSTALL_DIR}/euser_renew.py
 StandardOutput=journal
 StandardError=journal
 User=root
