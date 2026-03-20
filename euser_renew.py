@@ -25,6 +25,9 @@ from bs4 import BeautifulSoup
 from imap_tools import MailBox, AND
 from urllib.parse import quote
 
+# from dotenv import load_dotenv
+# load_dotenv('dev.env')  # 本地配置
+
 # 配置日志
 logging.basicConfig(
     level=logging.INFO,
@@ -47,11 +50,12 @@ USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 # ============== 配置数据类 ==============
 class AccountConfig:
     """单个账号配置"""
-    def __init__(self, email, password, imap_server='imap.gmail.com', email_password=''):
+    def __init__(self, email, password, imap_server='imap.gmail.com', email_pin='', email_password=''):
         self.email = email
         self.password = password
         self.imap_server = imap_server
         self.email_password = email_password if email_password else password
+        self.email_pin = email_pin
 
 
 class GlobalConfig:
@@ -81,6 +85,7 @@ ACCOUNTS = [
         email=os.getenv("EUSERV_EMAIL"),
         password=os.getenv("EUSERV_PASSWORD"),
         imap_server="imap.gmail.com",
+        email_pin=os.getenv("EMAIL_PIN"),
         email_password=os.getenv("EMAIL_PASS")  # Gmail 应用专用密码
     ),
     # 添加更多账号示例：
@@ -449,7 +454,7 @@ class EUserv:
                 time.sleep(3)  # 等待邮件到达
                 
                 pin = get_euserv_pin(
-                    self.config.email,
+                    self.config.email_pin,
                     self.config.email_password,
                     self.config.imap_server
                 )
@@ -708,7 +713,7 @@ class EUserv:
             logger.debug("步骤3: 等待并获取 PIN 码...")
             time.sleep(8)
             pin = get_euserv_pin(
-                self.config.email,
+                self.config.email_pin,
                 self.config.email_password,
                 self.config.imap_server
             )

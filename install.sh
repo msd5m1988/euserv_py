@@ -17,7 +17,7 @@ SERVICE_NAME="euserv-renew"
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
 COMMAND_LINK="/usr/local/bin/dj"
 MODE_FILE="${INSTALL_DIR}/.run_mode"
-GITHUB_REPO="https://raw.githubusercontent.com/dufei511/euserv_py/dev"
+GITHUB_REPO="https://raw.githubusercontent.com/dufei511/euserv_py/yuming"
 
 # 打印带颜色的信息
 print_info() {
@@ -100,9 +100,10 @@ configure_env() {
     
     # 必填项
     print_info "=== 必填项 ==="
-    read -p "请输入EUserv账号邮箱: " email
+    read -p "请输入EUserv登录账号邮箱: " email
     read -sp "请输入EUserv账号密码: " password
     echo ""
+    read -p "请输入接收pin的邮箱: " email_pin
     read -sp "请输入邮箱应用专用密码(EMAIL_PASS): " email_pass
     echo ""
     echo ""
@@ -118,6 +119,7 @@ configure_env() {
     cat > ${CONFIG_FILE} <<EOF
 # EUserv账号配置(必填)
 EUSERV_EMAIL=${email}
+EMAIL_PIN=${email_pin}
 EUSERV_PASSWORD=${password}
 EMAIL_PASS=${email_pass}
 
@@ -515,6 +517,7 @@ change_config() {
     read -p "请输入EUserv账号邮箱: " email
     read -sp "请输入EUserv账号密码: " password
     echo ""
+    read -p "请输入接收pin的邮箱: " email_pin
     read -sp "请输入邮箱应用专用密码(EMAIL_PASS): " email_pass
     echo ""
     echo ""
@@ -528,6 +531,7 @@ change_config() {
     cat > ${CONFIG_FILE} <<EOL
 # EUserv账号配置(必填)
 EUSERV_EMAIL=${email}
+EMAIL_PIN=${email_pin}
 EUSERV_PASSWORD=${password}
 EMAIL_PASS=${email_pass}
 
@@ -571,14 +575,14 @@ update_script() {
         fi
         
         echo "正在下载最新脚本..."
-        if curl -fsSL https://raw.githubusercontent.com/dufei511/euserv_py/dev/euser_renew.py -o ${INSTALL_DIR}/euser_renew.py.new; then
+        if curl -fsSL https://raw.githubusercontent.com/dufei511/euserv_py/yuming/euser_renew.py -o ${INSTALL_DIR}/euser_renew.py.new; then
             mv ${INSTALL_DIR}/euser_renew.py.new ${INSTALL_DIR}/euser_renew.py
             chmod +x ${INSTALL_DIR}/euser_renew.py
             echo ""
             print_success "脚本更新成功!"
             
             # 同时更新 requirements.txt
-            if curl -fsSL https://raw.githubusercontent.com/dufei511/euserv_py/dev/requirements.txt -o ${INSTALL_DIR}/requirements.txt.new; then
+            if curl -fsSL https://raw.githubusercontent.com/dufei511/euserv_py/yuming/requirements.txt -o ${INSTALL_DIR}/requirements.txt.new; then
                 mv ${INSTALL_DIR}/requirements.txt.new ${INSTALL_DIR}/requirements.txt
                 print_success "requirements.txt 更新成功!"
                 

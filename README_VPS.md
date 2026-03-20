@@ -1,4 +1,4 @@
-# euserv德鸡自动续期
+# euserv德鸡自动续期（域名邮箱版本，登录账号和接收pin码邮箱不同的情况）
 
 vps部署教程
 * [ACTION部署](./README.md)
@@ -11,7 +11,7 @@ vps部署教程
 
    一键脚本，快捷方式：dj
    ```bash
-   wget https://raw.githubusercontent.com/dufei511/euserv_py/dev/install.sh -O euserv_install.sh
+   wget https://raw.githubusercontent.com/dufei511/euserv_py/yuming/install.sh -O euserv_install.sh
    chmod +x euserv_install.sh
    ./euserv_install.sh install
    ```
