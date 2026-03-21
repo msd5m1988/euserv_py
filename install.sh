@@ -220,60 +220,71 @@ install_docker() {
 install_python() {
     print_info "安装Python ${PYTHON_TARGET} 环境..."
 
-    # 如果已有 python3.12，直接跳过安装
+    # 已安装则跳过
     if command -v ${PYTHON_BIN_NAME} &>/dev/null; then
         print_success "Python ${PYTHON_TARGET} 已安装，跳过"
     else
         print_info "正在安装 Python ${PYTHON_TARGET}（使用系统包管理器）..."
-        apt-get update -qq
 
-        # 判断系统：Ubuntu 还是 Debian
+        # 读取系统信息
         . /etc/os-release 2>/dev/null
         OS_ID="${ID:-unknown}"
+        OS_CODENAME="${VERSION_CODENAME:-$(lsb_release -cs 2>/dev/null || echo "unknown")}"
 
-        if apt-cache show ${PYTHON_BIN_NAME} &>/dev/null 2>&1; then
-            # 系统源里直接有（Ubuntu 24.04 / Debian 13 等）
-            apt-get install -y ${PYTHON_BIN_NAME} ${PYTHON_BIN_NAME}-distutils \
-                python3-pip -qq
-            print_success "Python ${PYTHON_TARGET} 安装完成"
+        print_info "系统: ${OS_ID} ${OS_CODENAME}"
 
+        # 先 update，忽略非致命错误
+        apt-get update -qq 2>/dev/null || apt-get update 2>/dev/null || true
+
+        # ---- 第一步：直接尝试从当前源安装（Debian 13 / Ubuntu 24.04 自带）----
+        print_info "尝试从系统源直接安装..."
+        if apt-get install -y ${PYTHON_BIN_NAME} python3-pip 2>/dev/null; then
+            # python3.12-distutils 在 Debian 13 已合并进主包，装不上也没关系
+            apt-get install -y ${PYTHON_BIN_NAME}-distutils 2>/dev/null || true
+            print_success "Python ${PYTHON_TARGET} 安装完成（系统源）"
+
+        # ---- 第二步：Ubuntu 旧版用 deadsnakes PPA ----
         elif [[ "$OS_ID" == "ubuntu" ]]; then
-            # Ubuntu 旧版本：用 deadsnakes PPA（预编译二进制，速度快）
-            print_info "添加 deadsnakes PPA（Ubuntu）..."
+            print_info "添加 deadsnakes PPA（Ubuntu ${OS_CODENAME}）..."
             apt-get install -y software-properties-common -qq
             add-apt-repository -y ppa:deadsnakes/ppa
             apt-get update -qq
             apt-get install -y ${PYTHON_BIN_NAME} ${PYTHON_BIN_NAME}-distutils \
-                ${PYTHON_BIN_NAME}-venv -qq
-            print_success "Python ${PYTHON_TARGET} 安装完成（via deadsnakes）"
+                ${PYTHON_BIN_NAME}-venv python3-pip
+            print_success "Python ${PYTHON_TARGET} 安装完成（deadsnakes）"
 
-        else
-            # Debian 系列：用 bookworm-backports 或最近稳定源
-            print_info "尝试从 backports 安装（Debian）..."
-            CODENAME=$(lsb_release -cs 2>/dev/null || echo "bookworm")
-            echo "deb http://deb.debian.org/debian ${CODENAME}-backports main" \
+        # ---- 第三步：Debian 旧版用 backports ----
+        elif [[ "$OS_ID" == "debian" ]]; then
+            print_info "尝试 Debian backports（${OS_CODENAME}-backports）..."
+            echo "deb http://deb.debian.org/debian ${OS_CODENAME}-backports main" \
                 > /etc/apt/sources.list.d/backports.list
             apt-get update -qq
-            if apt-cache show -t ${CODENAME}-backports ${PYTHON_BIN_NAME} &>/dev/null 2>&1; then
-                apt-get install -y -t ${CODENAME}-backports ${PYTHON_BIN_NAME} \
-                    ${PYTHON_BIN_NAME}-distutils -qq
-                print_success "Python ${PYTHON_TARGET} 安装完成（via backports）"
+            if apt-get install -y -t "${OS_CODENAME}-backports" ${PYTHON_BIN_NAME} python3-pip 2>/dev/null; then
+                apt-get install -y -t "${OS_CODENAME}-backports" \
+                    ${PYTHON_BIN_NAME}-distutils 2>/dev/null || true
+                print_success "Python ${PYTHON_TARGET} 安装完成（backports）"
             else
-                # 最后回退：deadsnakes 也支持部分 Debian
-                print_info "回退：使用 deadsnakes PPA..."
-                apt-get install -y software-properties-common -qq
-                add-apt-repository -y ppa:deadsnakes/ppa 2>/dev/null || true
-                apt-get update -qq
-                apt-get install -y ${PYTHON_BIN_NAME} ${PYTHON_BIN_NAME}-distutils -qq
-                print_success "Python ${PYTHON_TARGET} 安装完成（via deadsnakes fallback）"
+                print_error "所有安装方式均失败，当前 Debian ${OS_CODENAME} 不支持 Python ${PYTHON_TARGET}"
+                print_error "请升级到 Debian 13 (trixie) 或改用 Docker 模式"
+                exit 1
             fi
+
+        else
+            print_error "不支持的系统: ${OS_ID}，无法自动安装 Python ${PYTHON_TARGET}"
+            exit 1
         fi
     fi
+
+    # 安装后立即验证，失败就报错退出
+    if ! command -v ${PYTHON_BIN_NAME} &>/dev/null; then
+        print_error "Python ${PYTHON_TARGET} 安装后仍无法找到，请检查系统源或改用 Docker 模式"
+        exit 1
+    fi
+    print_success "验证通过: $(${PYTHON_BIN_NAME} --version)"
 
     # 确保 pip 可用
     if ! ${PYTHON_BIN_NAME} -m pip --version &>/dev/null 2>&1; then
         print_info "安装 pip..."
-        # 优先用系统包
         apt-get install -y python3-pip -qq 2>/dev/null || \
             curl -fsSL https://bootstrap.pypa.io/get-pip.py | ${PYTHON_BIN_NAME}
     fi
