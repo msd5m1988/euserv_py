@@ -218,78 +218,74 @@ install_docker() {
 # 安装Python 3.12环境（优化版，使用包管理器，避免源码编译）
 # -------------------------------------------------------
 install_python() {
-    print_info "安装Python ${PYTHON_TARGET} 环境..."
+    print_info "检测Python环境..."
 
-    # 已安装则跳过
-    if command -v ${PYTHON_BIN_NAME} &>/dev/null; then
-        print_success "Python ${PYTHON_TARGET} 已安装，跳过"
-    else
-        print_info "正在安装 Python ${PYTHON_TARGET}（使用系统包管理器）..."
+    # ================================================================
+    # 第一步：检测系统中已有的 python3 版本
+    # ================================================================
+    EXISTING_PYTHON=""
+    EXISTING_VER_MAJOR=0
+    EXISTING_VER_MINOR=0
 
-        # 读取系统信息
-        . /etc/os-release 2>/dev/null
-        OS_ID="${ID:-unknown}"
-        OS_CODENAME="${VERSION_CODENAME:-$(lsb_release -cs 2>/dev/null || echo "unknown")}"
-
-        print_info "系统: ${OS_ID} ${OS_CODENAME}"
-
-        # 先 update，忽略非致命错误
-        apt-get update -qq 2>/dev/null || apt-get update 2>/dev/null || true
-
-        # ---- 第一步：直接尝试从当前源安装（Debian 13 / Ubuntu 24.04 自带）----
-        print_info "尝试从系统源直接安装..."
-        if apt-get install -y ${PYTHON_BIN_NAME} python3-pip 2>/dev/null; then
-            # python3.12-distutils 在 Debian 13 已合并进主包，装不上也没关系
-            apt-get install -y ${PYTHON_BIN_NAME}-distutils 2>/dev/null || true
-            print_success "Python ${PYTHON_TARGET} 安装完成（系统源）"
-
-        # ---- 第二步：Ubuntu 旧版用 deadsnakes PPA ----
-        elif [[ "$OS_ID" == "ubuntu" ]]; then
-            print_info "添加 deadsnakes PPA（Ubuntu ${OS_CODENAME}）..."
-            apt-get install -y software-properties-common -qq
-            add-apt-repository -y ppa:deadsnakes/ppa
-            apt-get update -qq
-            apt-get install -y ${PYTHON_BIN_NAME} ${PYTHON_BIN_NAME}-distutils \
-                ${PYTHON_BIN_NAME}-venv python3-pip
-            print_success "Python ${PYTHON_TARGET} 安装完成（deadsnakes）"
-
-        # ---- 第三步：Debian 旧版用 backports ----
-        elif [[ "$OS_ID" == "debian" ]]; then
-            print_info "尝试 Debian backports（${OS_CODENAME}-backports）..."
-            echo "deb http://deb.debian.org/debian ${OS_CODENAME}-backports main" \
-                > /etc/apt/sources.list.d/backports.list
-            apt-get update -qq
-            if apt-get install -y -t "${OS_CODENAME}-backports" ${PYTHON_BIN_NAME} python3-pip 2>/dev/null; then
-                apt-get install -y -t "${OS_CODENAME}-backports" \
-                    ${PYTHON_BIN_NAME}-distutils 2>/dev/null || true
-                print_success "Python ${PYTHON_TARGET} 安装完成（backports）"
-            else
-                print_error "所有安装方式均失败，当前 Debian ${OS_CODENAME} 不支持 Python ${PYTHON_TARGET}"
-                print_error "请升级到 Debian 13 (trixie) 或改用 Docker 模式"
-                exit 1
+    for bin in python3.12 python3.11 python3.10 python3 python; do
+        if command -v "$bin" &>/dev/null; then
+            _ver=$("$bin" -c "import sys; print('{}.{}'.format(*sys.version_info[:2]))" 2>/dev/null)
+            _major=$(echo "$_ver" | cut -d. -f1)
+            _minor=$(echo "$_ver" | cut -d. -f2)
+            if [[ "$_major" == "3" ]]; then
+                EXISTING_PYTHON="$bin"
+                EXISTING_VER_MAJOR="$_major"
+                EXISTING_VER_MINOR="$_minor"
+                break
             fi
-
-        else
-            print_error "不支持的系统: ${OS_ID}，无法自动安装 Python ${PYTHON_TARGET}"
-            exit 1
         fi
+    done
+
+    # ================================================================
+    # 第二步：根据版本做判断
+    # ================================================================
+    if [[ -n "$EXISTING_PYTHON" ]]; then
+        print_info "检测到已安装 Python ${EXISTING_VER_MAJOR}.${EXISTING_VER_MINOR}（命令: $EXISTING_PYTHON）"
+
+        if [[ "$EXISTING_VER_MINOR" -ge 13 ]]; then
+            # 3.13 及以上，不支持
+            print_error "========================================="
+            print_error "当前 Python 版本为 ${EXISTING_VER_MAJOR}.${EXISTING_VER_MINOR}，续期脚本仅支持 Python 3.12 及以下版本"
+            print_error "请改用 Docker 模式（选项1），Docker 会使用独立的 python:3.12-slim 镜像"
+            print_error "========================================="
+            exit 1
+        else
+            # 3.12 及以下，直接使用
+            print_success "Python ${EXISTING_VER_MAJOR}.${EXISTING_VER_MINOR} 符合要求，跳过安装"
+            PYTHON_BIN_NAME="$EXISTING_PYTHON"
+        fi
+    else
+        # 没有找到任何 python3，直接安装
+        print_info "未检测到 Python，安装 Python 3.12..."
+        _do_install_python312
     fi
 
-    # 安装后立即验证，失败就报错退出
+    # ================================================================
+    # 第三步：最终验证
+    # ================================================================
     if ! command -v ${PYTHON_BIN_NAME} &>/dev/null; then
-        print_error "Python ${PYTHON_TARGET} 安装后仍无法找到，请检查系统源或改用 Docker 模式"
+        print_error "Python ${PYTHON_TARGET} 安装失败，请改用 Docker 模式"
         exit 1
     fi
-    print_success "验证通过: $(${PYTHON_BIN_NAME} --version)"
+    print_success "Python 验证通过: $(${PYTHON_BIN_NAME} --version)  路径: $(command -v ${PYTHON_BIN_NAME})"
 
-    # 确保 pip 可用
+    # ================================================================
+    # 第四步：确保 pip 可用
+    # ================================================================
     if ! ${PYTHON_BIN_NAME} -m pip --version &>/dev/null 2>&1; then
         print_info "安装 pip..."
         apt-get install -y python3-pip -qq 2>/dev/null || \
             curl -fsSL https://bootstrap.pypa.io/get-pip.py | ${PYTHON_BIN_NAME}
     fi
 
-    # 安装项目依赖
+    # ================================================================
+    # 第五步：安装项目依赖
+    # ================================================================
     print_info "安装Python依赖（来自requirements.txt）..."
     if [ -f "${INSTALL_DIR}/requirements.txt" ]; then
         ${PYTHON_BIN_NAME} -m pip install -q -r "${INSTALL_DIR}/requirements.txt" \
@@ -301,9 +297,61 @@ install_python() {
         exit 1
     fi
 
-    # 记录实际 python 路径供 systemd 使用
     PYTHON_FULL_PATH=$(command -v ${PYTHON_BIN_NAME})
     print_success "Python路径: ${PYTHON_FULL_PATH}"
+}
+
+# 实际执行安装 python3.12 的内部函数
+_do_install_python312() {
+    . /etc/os-release 2>/dev/null
+    OS_ID="${ID:-unknown}"
+    OS_CODENAME="${VERSION_CODENAME:-$(lsb_release -cs 2>/dev/null || echo "unknown")}"
+
+    print_info "系统: ${OS_ID} ${OS_CODENAME}"
+    apt-get update -qq 2>/dev/null || apt-get update 2>/dev/null || true
+
+    # 第一步：直接从系统源安装
+    print_info "尝试从系统源直接安装 python3.12..."
+    if apt-get install -y python3.12 python3-pip 2>/dev/null; then
+        apt-get install -y python3.12-distutils 2>/dev/null || true
+        PYTHON_BIN_NAME="python3.12"
+        print_success "Python 3.12 安装完成（系统源）"
+        return 0
+    fi
+
+    # 第二步：Ubuntu 旧版用 deadsnakes PPA
+    if [[ "$OS_ID" == "ubuntu" ]]; then
+        print_info "添加 deadsnakes PPA（Ubuntu ${OS_CODENAME}）..."
+        apt-get install -y software-properties-common -qq
+        add-apt-repository -y ppa:deadsnakes/ppa
+        apt-get update -qq
+        if apt-get install -y python3.12 python3.12-distutils python3.12-venv python3-pip; then
+            PYTHON_BIN_NAME="python3.12"
+            print_success "Python 3.12 安装完成（deadsnakes）"
+            return 0
+        fi
+    fi
+
+    # 第三步：Debian 旧版用 backports
+    if [[ "$OS_ID" == "debian" ]]; then
+        print_info "尝试 Debian backports（${OS_CODENAME}-backports）..."
+        echo "deb http://deb.debian.org/debian ${OS_CODENAME}-backports main" \
+            > /etc/apt/sources.list.d/backports.list
+        apt-get update -qq
+        if apt-get install -y -t "${OS_CODENAME}-backports" python3.12 python3-pip 2>/dev/null; then
+            apt-get install -y -t "${OS_CODENAME}-backports" python3.12-distutils 2>/dev/null || true
+            PYTHON_BIN_NAME="python3.12"
+            print_success "Python 3.12 安装完成（backports）"
+            return 0
+        fi
+    fi
+
+    # 全部失败
+    print_error "========================================="
+    print_error "无法在当前系统（${OS_ID} ${OS_CODENAME}）安装 Python 3.12"
+    print_error "建议改用 Docker 模式，重新执行脚本选择选项 1"
+    print_error "========================================="
+    exit 1
 }
 
 # 获取 python3.12 完整路径（给 systemd service 用）
