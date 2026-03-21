@@ -29,6 +29,7 @@ jobs:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
+          EMAIL_PIN: ${{ secrets.EMAIL_PIN }}
           BARK_URL: ${{ secrets.BARK_URL }}
         run: python euser_renew.py
 

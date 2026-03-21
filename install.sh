@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# EUserv 自动续期一键部署脚本 V2.0
+# EUserv 自动续期一键部署脚本 V2.1
 # 支持 Docker 和本地 Python 两种运行模式，可自由切换
 
 # 颜色定义
@@ -18,6 +18,10 @@ COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
 COMMAND_LINK="/usr/local/bin/dj"
 MODE_FILE="${INSTALL_DIR}/.run_mode"
 GITHUB_REPO="https://raw.githubusercontent.com/dufei511/euserv_py/yuming"
+
+# Python 目标版本
+PYTHON_TARGET="3.12"
+PYTHON_BIN_NAME="python3.12"
 
 # 打印带颜色的信息
 print_info() {
@@ -83,7 +87,6 @@ download_scripts() {
         print_success "requirements.txt 下载成功"
     else
         print_warning "requirements.txt 下载失败，将使用默认依赖列表"
-        # 创建默认的 requirements.txt
         cat > ${INSTALL_DIR}/requirements.txt <<'EOF'
 requests
 beautifulsoup4
@@ -126,44 +129,29 @@ EMAIL_PASS=${email_pass}
 # Telegram推送配置(可选)
 EOF
 
-    # 只有填写了才添加到配置文件
-    if [ -n "$tg_bot_token" ]; then
-        echo "TG_BOT_TOKEN=${tg_bot_token}" >> ${CONFIG_FILE}
-    fi
-    
-    if [ -n "$tg_chat_id" ]; then
-        echo "TG_CHAT_ID=${tg_chat_id}" >> ${CONFIG_FILE}
-    fi
-    
-    if [ -n "$bark_url" ]; then
-        echo "BARK_URL=${bark_url}" >> ${CONFIG_FILE}
-    fi
+    [ -n "$tg_bot_token" ] && echo "TG_BOT_TOKEN=${tg_bot_token}" >> ${CONFIG_FILE}
+    [ -n "$tg_chat_id" ]   && echo "TG_CHAT_ID=${tg_chat_id}"     >> ${CONFIG_FILE}
+    [ -n "$bark_url" ]     && echo "BARK_URL=${bark_url}"         >> ${CONFIG_FILE}
     
     chmod 600 ${CONFIG_FILE}
     print_success "环境变量配置完成"
 }
 
-# 创建Dockerfile
+# 创建Dockerfile（使用 Python 3.12）
 create_dockerfile() {
     print_info "创建Dockerfile..."
     cat > ${INSTALL_DIR}/Dockerfile <<'EOF'
-FROM python:3.9-slim
+FROM python:3.12-slim
 
-# 设置工作目录
 RUN mkdir -p /app && chmod 777 /app
 WORKDIR /app
 
-# 复制依赖文件
 COPY requirements.txt /app/
-
-# 安装依赖
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 设置时区
 ENV TZ=Asia/Shanghai
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
-# 复制脚本和配置
 COPY euser_renew.py /app/
 COPY config.env /app/
 
@@ -206,7 +194,6 @@ EOF
 install_docker() {
     print_info "安装Docker环境..."
     
-    # 检查Docker是否安装
     if ! command -v docker &> /dev/null; then
         print_info "Docker未安装,正在安装..."
         curl -fsSL https://get.docker.com | bash
@@ -217,7 +204,6 @@ install_docker() {
         print_success "Docker已安装"
     fi
     
-    # 检查docker-compose是否安装
     if ! command -v docker-compose &> /dev/null; then
         print_info "Docker Compose未安装,正在安装..."
         curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
@@ -228,49 +214,90 @@ install_docker() {
     fi
 }
 
-# 安装Python环境
+# -------------------------------------------------------
+# 安装Python 3.12环境（优化版，使用包管理器，避免源码编译）
+# -------------------------------------------------------
 install_python() {
-    print_info "安装Python环境..."
+    print_info "安装Python ${PYTHON_TARGET} 环境..."
 
-    # 检查是否已有 python3.10
-    if command -v python3.10 &> /dev/null; then
-        print_success "Python3.10已安装"
+    # 如果已有 python3.12，直接跳过安装
+    if command -v ${PYTHON_BIN_NAME} &>/dev/null; then
+        print_success "Python ${PYTHON_TARGET} 已安装，跳过"
     else
-        print_info "安装Python3.10..."
+        print_info "正在安装 Python ${PYTHON_TARGET}（使用系统包管理器）..."
         apt-get update -qq
-        # 安装编译依赖
-        apt-get install -y build-essential libssl-dev zlib1g-dev \
-            libncurses5-dev libncursesw5-dev libreadline-dev libsqlite3-dev \
-            libgdbm-dev libdb5.3-dev libbz2-dev libexpat1-dev liblzma-dev \
-            libffi-dev wget -qq
 
-        # 下载并编译 Python 3.10
-        cd /tmp
-        wget -q https://www.python.org/ftp/python/3.10.14/Python-3.10.14.tgz
-        tar -xzf Python-3.10.14.tgz
-        cd Python-3.10.14
-        ./configure --quiet
-        make -j$(nproc)
-        make altinstall   # altinstall 不覆盖系统默认 python3
+        # 判断系统：Ubuntu 还是 Debian
+        . /etc/os-release 2>/dev/null
+        OS_ID="${ID:-unknown}"
 
-        print_success "Python3.10安装完成"
-        cd /tmp && rm -rf Python-3.10.14 Python-3.10.14.tgz
+        if apt-cache show ${PYTHON_BIN_NAME} &>/dev/null 2>&1; then
+            # 系统源里直接有（Ubuntu 24.04 / Debian 13 等）
+            apt-get install -y ${PYTHON_BIN_NAME} ${PYTHON_BIN_NAME}-distutils \
+                python3-pip -qq
+            print_success "Python ${PYTHON_TARGET} 安装完成"
+
+        elif [[ "$OS_ID" == "ubuntu" ]]; then
+            # Ubuntu 旧版本：用 deadsnakes PPA（预编译二进制，速度快）
+            print_info "添加 deadsnakes PPA（Ubuntu）..."
+            apt-get install -y software-properties-common -qq
+            add-apt-repository -y ppa:deadsnakes/ppa
+            apt-get update -qq
+            apt-get install -y ${PYTHON_BIN_NAME} ${PYTHON_BIN_NAME}-distutils \
+                ${PYTHON_BIN_NAME}-venv -qq
+            print_success "Python ${PYTHON_TARGET} 安装完成（via deadsnakes）"
+
+        else
+            # Debian 系列：用 bookworm-backports 或最近稳定源
+            print_info "尝试从 backports 安装（Debian）..."
+            CODENAME=$(lsb_release -cs 2>/dev/null || echo "bookworm")
+            echo "deb http://deb.debian.org/debian ${CODENAME}-backports main" \
+                > /etc/apt/sources.list.d/backports.list
+            apt-get update -qq
+            if apt-cache show -t ${CODENAME}-backports ${PYTHON_BIN_NAME} &>/dev/null 2>&1; then
+                apt-get install -y -t ${CODENAME}-backports ${PYTHON_BIN_NAME} \
+                    ${PYTHON_BIN_NAME}-distutils -qq
+                print_success "Python ${PYTHON_TARGET} 安装完成（via backports）"
+            else
+                # 最后回退：deadsnakes 也支持部分 Debian
+                print_info "回退：使用 deadsnakes PPA..."
+                apt-get install -y software-properties-common -qq
+                add-apt-repository -y ppa:deadsnakes/ppa 2>/dev/null || true
+                apt-get update -qq
+                apt-get install -y ${PYTHON_BIN_NAME} ${PYTHON_BIN_NAME}-distutils -qq
+                print_success "Python ${PYTHON_TARGET} 安装完成（via deadsnakes fallback）"
+            fi
+        fi
     fi
 
-    # 安装 pip for 3.10
-    if ! command -v pip3.10 &> /dev/null; then
-        curl -sS https://bootstrap.pypa.io/get-pip.py | python3.10
+    # 确保 pip 可用
+    if ! ${PYTHON_BIN_NAME} -m pip --version &>/dev/null 2>&1; then
+        print_info "安装 pip..."
+        # 优先用系统包
+        apt-get install -y python3-pip -qq 2>/dev/null || \
+            curl -fsSL https://bootstrap.pypa.io/get-pip.py | ${PYTHON_BIN_NAME}
     fi
 
-    # 安装Python依赖
-    print_info "从requirements.txt安装Python依赖..."
+    # 安装项目依赖
+    print_info "安装Python依赖（来自requirements.txt）..."
     if [ -f "${INSTALL_DIR}/requirements.txt" ]; then
-        pip3.10 install -r ${INSTALL_DIR}/requirements.txt
+        ${PYTHON_BIN_NAME} -m pip install -q -r "${INSTALL_DIR}/requirements.txt" \
+            || ${PYTHON_BIN_NAME} -m pip install -q -r "${INSTALL_DIR}/requirements.txt" \
+               --break-system-packages
         print_success "Python依赖安装完成"
     else
-        print_error "requirements.txt 文件不存在"
+        print_error "requirements.txt 不存在"
         exit 1
     fi
+
+    # 记录实际 python 路径供 systemd 使用
+    PYTHON_FULL_PATH=$(command -v ${PYTHON_BIN_NAME})
+    print_success "Python路径: ${PYTHON_FULL_PATH}"
+}
+
+# 获取 python3.12 完整路径（给 systemd service 用）
+get_python_path() {
+    command -v ${PYTHON_BIN_NAME} 2>/dev/null || echo "/usr/bin/${PYTHON_BIN_NAME}"
 }
 
 # 创建systemd定时器（Docker模式）
@@ -319,19 +346,22 @@ EOF
 # 创建systemd定时器（Python模式）
 setup_python_cron() {
     local run_hour=$1
+    local python_path
+    python_path=$(get_python_path)
     
     print_info "设置Python模式定时任务(每天${run_hour}点执行)..."
+    print_info "使用Python路径: ${python_path}"
     
     cat > /etc/systemd/system/${SERVICE_NAME}.service <<EOF
 [Unit]
-Description=EUserv Auto Renew Service (Python)
+Description=EUserv Auto Renew Service (Python ${PYTHON_TARGET})
 After=network.target
 
 [Service]
 Type=oneshot
 WorkingDirectory=${INSTALL_DIR}
 EnvironmentFile=${CONFIG_FILE}
-ExecStart=/usr/local/bin/python3.10 ${INSTALL_DIR}/euser_renew.py
+ExecStart=${python_path} ${INSTALL_DIR}/euser_renew.py
 StandardOutput=journal
 StandardError=journal
 User=root
@@ -371,6 +401,7 @@ INSTALL_DIR="/opt/euserv_renew"
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
 MODE_FILE="${INSTALL_DIR}/.run_mode"
 CONFIG_FILE="${INSTALL_DIR}/config.env"
+PYTHON_BIN="python3.12"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -396,13 +427,18 @@ get_run_mode() {
     fi
 }
 
+# 获取 python 路径
+get_python_path() {
+    command -v ${PYTHON_BIN} 2>/dev/null || echo "/usr/bin/${PYTHON_BIN}"
+}
+
 show_menu() {
     clear
     local mode=$(get_run_mode)
     local mode_display="未知"
     case $mode in
         docker) mode_display="Docker容器" ;;
-        python) mode_display="本地Python" ;;
+        python) mode_display="本地Python ${PYTHON_BIN}" ;;
         *) mode_display="未配置" ;;
     esac
     
@@ -547,17 +583,9 @@ EMAIL_PASS=${email_pass}
 # Telegram推送配置(可选)
 EOL
 
-    if [ -n "$tg_bot_token" ]; then
-        echo "TG_BOT_TOKEN=${tg_bot_token}" >> ${CONFIG_FILE}
-    fi
-    
-    if [ -n "$tg_chat_id" ]; then
-        echo "TG_CHAT_ID=${tg_chat_id}" >> ${CONFIG_FILE}
-    fi
-    
-    if [ -n "$bark_url" ]; then
-        echo "BARK_URL=${bark_url}" >> ${CONFIG_FILE}
-    fi
+    [ -n "$tg_bot_token" ] && echo "TG_BOT_TOKEN=${tg_bot_token}" >> ${CONFIG_FILE}
+    [ -n "$tg_chat_id" ]   && echo "TG_CHAT_ID=${tg_chat_id}"     >> ${CONFIG_FILE}
+    [ -n "$bark_url" ]     && echo "BARK_URL=${bark_url}"         >> ${CONFIG_FILE}
     
     chmod 600 ${CONFIG_FILE}
     echo "配置已更新"
@@ -579,28 +607,29 @@ update_script() {
     
     if [[ $confirm == "y" || $confirm == "Y" ]]; then
         echo "正在备份当前脚本..."
-        if [ -f "${INSTALL_DIR}/euser_renew.py" ]; then
+        [ -f "${INSTALL_DIR}/euser_renew.py" ] && \
             cp ${INSTALL_DIR}/euser_renew.py ${INSTALL_DIR}/euser_renew.py.bak.$(date +%Y%m%d_%H%M%S)
-        fi
         
         echo "正在下载最新脚本..."
-        if curl -fsSL https://raw.githubusercontent.com/dufei511/euserv_py/yuming/euser_renew.py -o ${INSTALL_DIR}/euser_renew.py.new; then
+        if curl -fsSL https://raw.githubusercontent.com/dufei511/euserv_py/yuming/euser_renew.py \
+            -o ${INSTALL_DIR}/euser_renew.py.new; then
             mv ${INSTALL_DIR}/euser_renew.py.new ${INSTALL_DIR}/euser_renew.py
             chmod +x ${INSTALL_DIR}/euser_renew.py
-            echo ""
             print_success "脚本更新成功!"
             
-            # 同时更新 requirements.txt
-            if curl -fsSL https://raw.githubusercontent.com/dufei511/euserv_py/yuming/requirements.txt -o ${INSTALL_DIR}/requirements.txt.new; then
+            if curl -fsSL https://raw.githubusercontent.com/dufei511/euserv_py/yuming/requirements.txt \
+                -o ${INSTALL_DIR}/requirements.txt.new; then
                 mv ${INSTALL_DIR}/requirements.txt.new ${INSTALL_DIR}/requirements.txt
                 print_success "requirements.txt 更新成功!"
                 
-                # 如果是Python模式，重新安装依赖
                 local mode=$(get_run_mode)
                 if [ "$mode" == "python" ]; then
                     echo "正在更新Python依赖..."
-                    pip3 install --quiet -r ${INSTALL_DIR}/requirements.txt 2>/dev/null || \
-                    pip3 install -r ${INSTALL_DIR}/requirements.txt
+                    local py_path
+                    py_path=$(get_python_path)
+                    ${py_path} -m pip install -q -r ${INSTALL_DIR}/requirements.txt \
+                        || ${py_path} -m pip install -q -r ${INSTALL_DIR}/requirements.txt \
+                           --break-system-packages
                     print_success "依赖更新完成"
                 fi
             fi
@@ -649,15 +678,12 @@ switch_mode() {
         1)
             if [ "$current_mode" == "docker" ]; then
                 echo "当前已是Docker模式"
-                sleep 2
-                show_menu
-                return
+                sleep 2; show_menu; return
             fi
             
             echo ""
             echo "正在切换到Docker模式..."
             
-            # 检查Docker
             if ! command -v docker &> /dev/null; then
                 echo "Docker未安装，正在安装..."
                 curl -fsSL https://get.docker.com | bash
@@ -667,23 +693,22 @@ switch_mode() {
             
             if ! command -v docker-compose &> /dev/null; then
                 echo "Docker Compose未安装，正在安装..."
-                curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+                curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" \
+                    -o /usr/local/bin/docker-compose
                 chmod +x /usr/local/bin/docker-compose
             fi
             
-            # 停止Python模式服务
             systemctl stop euserv-renew.timer 2>/dev/null
             systemctl stop euserv-renew.service 2>/dev/null
             
-            # 获取当前执行时间
-            local run_hour=$(grep "OnCalendar=" /etc/systemd/system/euserv-renew.timer 2>/dev/null | sed 's/.*\*-\*-\* \([0-9]*\):00:00/\1/' || echo "3")
+            local run_hour
+            run_hour=$(grep "OnCalendar=" /etc/systemd/system/euserv-renew.timer 2>/dev/null \
+                | sed 's/.*\*-\*-\* \([0-9]*\):00:00/\1/' || echo "3")
             
-            # 创建Docker配置
             cd ${INSTALL_DIR}
             
-            # 创建Dockerfile
             cat > Dockerfile <<'DOCKERFILE'
-FROM python:3.9-slim
+FROM python:3.12-slim
 
 RUN mkdir -p /app && chmod 777 /app
 WORKDIR /app
@@ -700,7 +725,6 @@ COPY config.env /app/
 CMD ["python", "/app/euser_renew.py"]
 DOCKERFILE
 
-            # 创建docker-compose.yml
             cat > docker-compose.yml <<COMPOSE
 services:
   euserv-renew:
@@ -721,7 +745,6 @@ services:
       - no-new-privileges:true
 COMPOSE
 
-            # 更新systemd服务
             cat > /etc/systemd/system/euserv-renew.service <<SERVICE
 [Unit]
 Description=EUserv Auto Renew Service (Docker)
@@ -750,50 +773,58 @@ SERVICE
         2)
             if [ "$current_mode" == "python" ]; then
                 echo "当前已是Python模式"
-                sleep 2
-                show_menu
-                return
+                sleep 2; show_menu; return
             fi
             
             echo ""
-            echo "正在切换到Python模式..."
+            echo "正在切换到Python ${PYTHON_BIN} 模式..."
             
-            # 停止Docker容器
             cd ${INSTALL_DIR}
             docker-compose down -v 2>/dev/null
             
-            # 检查Python和pip
-            if ! command -v python3 &> /dev/null; then
-                echo "安装Python3..."
+            # 安装 python3.12（包管理器）
+            if ! command -v ${PYTHON_BIN} &>/dev/null; then
                 apt-get update -qq
-                apt-get install -y python3 -qq
+                . /etc/os-release 2>/dev/null
+                if apt-cache show ${PYTHON_BIN} &>/dev/null 2>&1; then
+                    apt-get install -y ${PYTHON_BIN} ${PYTHON_BIN}-distutils python3-pip -qq
+                elif [[ "${ID:-}" == "ubuntu" ]]; then
+                    apt-get install -y software-properties-common -qq
+                    add-apt-repository -y ppa:deadsnakes/ppa
+                    apt-get update -qq
+                    apt-get install -y ${PYTHON_BIN} ${PYTHON_BIN}-distutils -qq
+                else
+                    CODENAME=$(lsb_release -cs 2>/dev/null || echo "bookworm")
+                    echo "deb http://deb.debian.org/debian ${CODENAME}-backports main" \
+                        > /etc/apt/sources.list.d/backports.list
+                    apt-get update -qq
+                    apt-get install -y -t ${CODENAME}-backports ${PYTHON_BIN} || \
+                        apt-get install -y ${PYTHON_BIN} -qq
+                fi
             fi
             
-            if ! command -v pip3 &> /dev/null; then
-                echo "安装pip3..."
-                apt-get update -qq
-                apt-get install -y python3-pip -qq
-            fi
+            local py_path
+            py_path=$(command -v ${PYTHON_BIN})
             
-            # 安装依赖
             echo "安装Python依赖..."
-            pip3 install --quiet -r ${INSTALL_DIR}/requirements.txt 2>/dev/null || \
-            pip3 install -r ${INSTALL_DIR}/requirements.txt
+            ${py_path} -m pip install -q -r ${INSTALL_DIR}/requirements.txt \
+                || ${py_path} -m pip install -q -r ${INSTALL_DIR}/requirements.txt \
+                   --break-system-packages
             
-            # 获取当前执行时间
-            local run_hour=$(grep "OnCalendar=" /etc/systemd/system/euserv-renew.timer 2>/dev/null | sed 's/.*\*-\*-\* \([0-9]*\):00:00/\1/' || echo "3")
+            local run_hour
+            run_hour=$(grep "OnCalendar=" /etc/systemd/system/euserv-renew.timer 2>/dev/null \
+                | sed 's/.*\*-\*-\* \([0-9]*\):00:00/\1/' || echo "3")
             
-            # 更新systemd服务
             cat > /etc/systemd/system/euserv-renew.service <<SERVICE
 [Unit]
-Description=EUserv Auto Renew Service (Python)
+Description=EUserv Auto Renew Service (Python 3.12)
 After=network.target
 
 [Service]
 Type=oneshot
 WorkingDirectory=${INSTALL_DIR}
 EnvironmentFile=${CONFIG_FILE}
-ExecStart=/usr/bin/python3.10 ${INSTALL_DIR}/euser_renew.py
+ExecStart=${py_path} ${INSTALL_DIR}/euser_renew.py
 StandardOutput=journal
 StandardError=journal
 User=root
@@ -807,9 +838,8 @@ SERVICE
             systemctl start euserv-renew.timer
             
             echo "python" > ${MODE_FILE}
-            print_success "已切换到Python模式"
+            print_success "已切换到Python 3.12模式"
             
-            # 测试运行
             read -p "是否立即测试运行? (Y/n): " test_run
             if [[ $test_run != "n" && $test_run != "N" ]]; then
                 echo ""
@@ -820,15 +850,12 @@ SERVICE
             ;;
             
         3)
-            show_menu
-            return
+            show_menu; return
             ;;
             
         *)
-            echo "无效选择"
-            sleep 2
-            switch_mode
-            return
+            echo "无效选择"; sleep 2
+            switch_mode; return
             ;;
     esac
     
@@ -844,24 +871,20 @@ uninstall() {
     if [[ $confirm == "y" || $confirm == "Y" ]]; then
         echo "正在卸载..."
         
-        # 停止服务
         systemctl stop euserv-renew.timer 2>/dev/null
         systemctl disable euserv-renew.timer 2>/dev/null
         systemctl stop euserv-renew.service 2>/dev/null
         
-        # 停止Docker容器
         if [ -d "${INSTALL_DIR}" ] && [ -f "${INSTALL_DIR}/docker-compose.yml" ]; then
             cd ${INSTALL_DIR}
             docker-compose down -v 2>/dev/null
         fi
         
-        # 删除服务文件
         rm -f /etc/systemd/system/euserv-renew.service
         rm -f /etc/systemd/system/euserv-renew.timer
         rm -f /etc/systemd/system/euserv-renew.*
         systemctl daemon-reload
         
-        # 删除安装目录
         rm -rf ${INSTALL_DIR}
         rm -f /usr/local/bin/dj
         
@@ -880,9 +903,7 @@ EOF
 }
 
 # 选择运行模式
-# 选择运行模式
 choose_run_mode() {
-    # 所有的 echo 和 print_info 后面都加上 >&2
     echo "" >&2
     print_info "请选择运行模式:" >&2
     echo "" >&2
@@ -891,7 +912,7 @@ choose_run_mode() {
     echo "   缺点: 需要一定的磁盘空间和资源" >&2
     echo "   推荐: 配置较高的VPS (2GB+ 内存)" >&2
     echo "" >&2
-    echo "2. 本地Python模式" >&2
+    echo "2. 本地Python模式 (Python ${PYTHON_TARGET})" >&2
     echo "   优点: 资源占用少，启动快" >&2
     echo "   缺点: 依赖直接安装在系统上" >&2
     echo "   推荐: 配置较低的VPS (512MB-1GB 内存)" >&2
@@ -900,26 +921,23 @@ choose_run_mode() {
     read -p "请选择运行模式 [1/2]: " mode_choice
 
     case $mode_choice in
-        1)
-            echo "docker"   
-            ;;
-        2)
-            echo "python"   
-            ;;
+        1) echo "docker" ;;
+        2) echo "python" ;;
         *)
             print_warning "无效选择，默认使用Python模式" >&2
-            echo "python" 
+            echo "python"
             ;;
     esac
 }
 
 # 安装主函数
 install() {
-    print_info "开始安装EUserv自动续期服务..."
+    print_info "开始安装EUserv自动续期服务 V2.1..."
     echo ""
     
     # 检查是否已安装
-    if [ -d "${INSTALL_DIR}" ] || [ -f "${COMMAND_LINK}" ] || systemctl list-unit-files | grep -q "euserv-renew"; then
+    if [ -d "${INSTALL_DIR}" ] || [ -f "${COMMAND_LINK}" ] || \
+        systemctl list-unit-files | grep -q "euserv-renew"; then
         print_warning "检测到已安装的组件:"
         [ -d "${INSTALL_DIR}" ] && echo "  - 安装目录: ${INSTALL_DIR}"
         [ -f "${COMMAND_LINK}" ] && echo "  - 快捷命令: ${COMMAND_LINK}"
@@ -936,13 +954,11 @@ install() {
         fi
     fi
     
-    # 执行基础安装步骤
     check_root
     create_directories
     download_scripts
     configure_env
     
-    # 设置执行时间
     read -p "请输入每天执行的小时数(0-23,默认3点): " run_hour
     run_hour=${run_hour:-3}
     
@@ -951,7 +967,6 @@ install() {
         run_hour=3
     fi
     
-    # 选择运行模式
     run_mode=$(choose_run_mode)
     
     echo ""
@@ -976,6 +991,7 @@ install() {
     print_success "EUserv自动续期服务安装完成!"
     print_success "========================================="
     print_info "运行模式: ${run_mode}"
+    [ "$run_mode" == "python" ] && print_info "Python版本: ${PYTHON_TARGET}"
     print_info "服务将在每天 ${run_hour}:00 自动执行"
     print_info "使用以下命令管理服务:"
     print_info "  dj                - 打开管理面板"
@@ -997,7 +1013,6 @@ install() {
 uninstall_service() {
     print_info "开始卸载EUserv自动续期服务..."
     
-    # 停止并禁用服务
     if systemctl list-unit-files | grep -q "euserv-renew.timer"; then
         systemctl stop euserv-renew.timer 2>/dev/null
         systemctl disable euserv-renew.timer 2>/dev/null
@@ -1010,44 +1025,25 @@ uninstall_service() {
         print_info "已停止执行服务"
     fi
     
-    # 停止Docker容器
     if [ -d "${INSTALL_DIR}" ] && [ -f "${INSTALL_DIR}/docker-compose.yml" ]; then
         cd ${INSTALL_DIR}
         docker-compose down -v 2>/dev/null
         print_info "已停止Docker容器"
     fi
     
-    # 删除服务文件
-    if [ -f /etc/systemd/system/euserv-renew.service ]; then
-        rm -f /etc/systemd/system/euserv-renew.service
-        print_info "已删除服务文件"
-    fi
-    
-    if [ -f /etc/systemd/system/euserv-renew.timer ]; then
-        rm -f /etc/systemd/system/euserv-renew.timer
-        print_info "已删除定时器文件"
-    fi
-    
+    rm -f /etc/systemd/system/euserv-renew.service
+    rm -f /etc/systemd/system/euserv-renew.timer
     systemctl daemon-reload
     
-    # 删除安装目录
-    if [ -d "${INSTALL_DIR}" ]; then
-        rm -rf ${INSTALL_DIR}
-        print_info "已删除安装目录"
-    fi
-    
-    # 删除快捷命令
-    if [ -f ${COMMAND_LINK} ]; then
-        rm -f ${COMMAND_LINK}
-        print_info "已删除快捷命令"
-    fi
+    rm -rf ${INSTALL_DIR}
+    rm -f ${COMMAND_LINK}
     
     print_success "卸载完成!"
 }
 
 # 显示帮助信息
 show_help() {
-    echo "EUserv 自动续期一键部署脚本 V2.0"
+    echo "EUserv 自动续期一键部署脚本 V2.1"
     echo ""
     echo "用法: $0 [选项]"
     echo ""
@@ -1061,16 +1057,9 @@ show_help() {
 # 主函数
 main() {
     case "${1:-install}" in
-        install)
-            install
-            ;;
-        uninstall)
-            check_root
-            uninstall_service
-            ;;
-        help|--help|-h)
-            show_help
-            ;;
+        install)   install ;;
+        uninstall) check_root; uninstall_service ;;
+        help|--help|-h) show_help ;;
         *)
             print_error "未知选项: $1"
             show_help
