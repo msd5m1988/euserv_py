@@ -84,17 +84,39 @@ ACCOUNTS = [
     AccountConfig(
         email=os.getenv("EUSERV_EMAIL"),
         password=os.getenv("EUSERV_PASSWORD"),
-        imap_server="imap.gmail.com",
+        imap_server=os.getenv("IMAP_SERV"),
         email_pin=os.getenv("EMAIL_PIN"),
         email_password=os.getenv("EMAIL_PASS")  # Gmail 应用专用密码
     ),
     # 添加更多账号示例：
-    # AccountConfig(
-    #     email="account2@gmail.com",
-    #     password="password2",
-    #     imap_server="imap.gmail.com",
-    #     email_password="app_specific_password2"
-    # ),
+    AccountConfig(
+        email=os.getenv("EUSERV_EMAIL2"),
+        password=os.getenv("EUSERV_PASSWORD2"),
+        imap_server=os.getenv("IMAP_SERV2"),
+        email_pin=os.getenv("EMAIL_PIN2"),
+        email_password=os.getenv("EMAIL_PASS2")  # Gmail 应用专用密码
+    ),
+    AccountConfig(
+        email=os.getenv("EUSERV_EMAIL3"),
+        password=os.getenv("EUSERV_PASSWORD3"),
+        imap_server=os.getenv("IMAP_SERV3"),
+        email_pin=os.getenv("EMAIL_PIN3"),
+        email_password=os.getenv("EMAIL_PASS3")  # Gmail 应用专用密码
+    ),
+    AccountConfig(
+        email=os.getenv("EUSERV_EMAIL4"),
+        password=os.getenv("EUSERV_PASSWORD4"),
+        imap_server=os.getenv("IMAP_SERV4"),
+        email_pin=os.getenv("EMAIL_PIN4"),
+        email_password=os.getenv("EMAIL_PASS4")  # Gmail 应用专用密码
+    ),
+    AccountConfig(
+        email=os.getenv("EUSERV_EMAIL5"),
+        password=os.getenv("EUSERV_PASSWORD5"),
+        imap_server=os.getenv("IMAP_SERV5"),
+        email_pin=os.getenv("EMAIL_PIN5"),
+        email_password=os.getenv("EMAIL_PASS5")  # Gmail 应用专用密码
+    ),
 ]
 
 # ====================================
@@ -961,6 +983,7 @@ def main():
         future_to_account = {
             executor.submit(process_account, account, GLOBAL_CONFIG): account 
             for account in ACCOUNTS
+            if account.email and str(account.email).strip() and account.password and str(account.password).strip() and account.email_pin and str(account.email_pin).strip() and account.email_password and str(account.email_password).strip()
         }
         
         # 等待任务完成
