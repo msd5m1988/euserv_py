@@ -693,31 +693,38 @@ class EUserv:
             soup = BeautifulSoup(detail_response.text, 'html.parser')
             servers = {}
 
-            selector = '#kc2_order_customer_orders_tab_content_1 .kc2_order_table.kc2_content_table tr, #kc2_order_customer_orders_tab_content_2 .kc2_order_table.kc2_content_table tr'
-            for tr in soup.select(selector):
-                server_id = tr.select('.td-z1-sp1-kc')
-                if len(server_id) != 1:
-                    continue
-                
-                action_containers = tr.select('.td-z1-sp2-kc .kc2_order_action_container')
-                if not action_containers:
-                    continue
+            # 修复1: 动态匹配所有 Tab，不硬编码 ID
+            all_tabs = soup.select('[id^="kc2_order_customer_orders_tab_content_"]')
+            
+            for tab in all_tabs:
+                for tr in tab.select('.kc2_order_table.kc2_content_table tr'):
+                    server_id_cells = tr.select('.td-z1-sp1-kc')
+                    if len(server_id_cells) != 1:
+                        continue
                     
-                action_text = action_containers[0].get_text()
-                logger.debug(f"续期信息: {action_text}")
+                    # 修复2: 取所有 td-z1-sp2-kc，用索引 [2] 拿 Actions 列
+                    action_cells = tr.select('.td-z1-sp2-kc')
+                    if len(action_cells) < 3:
+                        continue
+                    
+                    # Actions 列是第 3 个（索引 2）
+                    action_text = action_cells[2].get_text(strip=True)
+                    logger.debug(f"续期信息: {action_text}")
 
-                can_renew = action_text.find("Contract extension possible from") == -1
-                can_renew_date = ""
-                
-                if not can_renew:
-                    date_pattern = r'\b\d{4}-\d{2}-\d{2}\b'
-                    match = re.search(date_pattern, action_text)
-                    if match:
-                        can_renew_date = match.group(0)
-                        can_renew = datetime.today().date() >= datetime.strptime(can_renew_date, "%Y-%m-%d").date()
+                    can_renew = True
+                    can_renew_date = ""
+                    
+                    if "Contract extension possible from" in action_text:
+                        date_match = re.search(r'\b(\d{4}-\d{2}-\d{2})\b', action_text)
+                        if date_match:
+                            can_renew_date = date_match.group(1)
+                            can_renew = datetime.today().date() >= datetime.strptime(can_renew_date, "%Y-%m-%d").date()
+                        else:
+                            # 有提示但没解析出日期，保守处理为不可续期
+                            can_renew = False
 
-                server_id_text = server_id[0].get_text().strip()
-                servers[server_id_text] = (can_renew, can_renew_date)
+                    server_id_text = server_id_cells[0].get_text(strip=True)
+                    servers[server_id_text] = (can_renew, can_renew_date)
             
             logger.info(f"✅ 账号 {self.config.email} 找到 {len(servers)} 台服务器")
             return servers
