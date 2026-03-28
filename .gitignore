@@ -2,3 +2,4 @@
 *.env
 *Test.py
 *.png
+cookies/

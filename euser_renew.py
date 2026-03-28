@@ -84,7 +84,7 @@ ACCOUNTS = [
     AccountConfig(
         email=os.getenv("EUSERV_EMAIL"),
         password=os.getenv("EUSERV_PASSWORD"),
-        imap_server=os.getenv("IMAP_SERV"),
+        imap_server=os.getenv("IMAP_SERV", "imap.gmail.com"),
         email_pin=os.getenv("EMAIL_PIN"),
         email_password=os.getenv("EMAIL_PASS")  # Gmail 应用专用密码
     ),
@@ -92,28 +92,28 @@ ACCOUNTS = [
     AccountConfig(
         email=os.getenv("EUSERV_EMAIL2"),
         password=os.getenv("EUSERV_PASSWORD2"),
-        imap_server=os.getenv("IMAP_SERV2"),
+        imap_server=os.getenv("IMAP_SERV2", "imap.gmail.com"),
         email_pin=os.getenv("EMAIL_PIN2"),
         email_password=os.getenv("EMAIL_PASS2")  # Gmail 应用专用密码
     ),
     AccountConfig(
         email=os.getenv("EUSERV_EMAIL3"),
         password=os.getenv("EUSERV_PASSWORD3"),
-        imap_server=os.getenv("IMAP_SERV3"),
+        imap_server=os.getenv("IMAP_SERV3", "imap.gmail.com"),
         email_pin=os.getenv("EMAIL_PIN3"),
         email_password=os.getenv("EMAIL_PASS3")  # Gmail 应用专用密码
     ),
     AccountConfig(
         email=os.getenv("EUSERV_EMAIL4"),
         password=os.getenv("EUSERV_PASSWORD4"),
-        imap_server=os.getenv("IMAP_SERV4"),
+        imap_server=os.getenv("IMAP_SERV4", "imap.gmail.com"),
         email_pin=os.getenv("EMAIL_PIN4"),
         email_password=os.getenv("EMAIL_PASS4")  # Gmail 应用专用密码
     ),
     AccountConfig(
         email=os.getenv("EUSERV_EMAIL5"),
         password=os.getenv("EUSERV_PASSWORD5"),
-        imap_server=os.getenv("IMAP_SERV5"),
+        imap_server=os.getenv("IMAP_SERV5", "imap.gmail.com"),
         email_pin=os.getenv("EMAIL_PIN5"),
         email_password=os.getenv("EMAIL_PASS5")  # Gmail 应用专用密码
     ),
@@ -369,14 +369,46 @@ def get_euserv_pin(email: str, email_password: str, imap_server: str) -> Optiona
 class EUserv:
     """EUserv 操作类"""
     
+    # Cookie 文件保存目录
+    COOKIE_DIR = "cookies"
+
     def __init__(self, config: AccountConfig):
         self.config = config
         self.session = requests.Session()
         self.sess_id = None
         self.c_id = None
+        # 每个账号对应一个独立的 cookie 文件
+        os.makedirs(self.COOKIE_DIR, exist_ok=True)
+        safe_name = re.sub(r'[^\w@.-]', '_', config.email)
+        self.cookie_file = os.path.join(self.COOKIE_DIR, f"{safe_name}.json")
+        # 初始化时尝试加载已保存的 Cookie（让服务器识别为受信任设备，跳过 PIN）
+        self._load_cookies()
         
+    def _save_cookies(self):
+        """将当前 session 的 Cookie 持久化到文件"""
+        try:
+            cookies = {c.name: c.value for c in self.session.cookies}
+            with open(self.cookie_file, 'w', encoding='utf-8') as f:
+                json.dump(cookies, f)
+            logger.info(f"✅ 信任设备 Cookie 已保存: {self.cookie_file}")
+        except Exception as e:
+            logger.warning(f"⚠️ 保存 Cookie 失败: {e}")
+
+    def _load_cookies(self):
+        """从文件加载 Cookie 到 session（登录前携带，让服务器跳过 PIN 验证）"""
+        if not os.path.exists(self.cookie_file):
+            return
+        try:
+            with open(self.cookie_file, 'r', encoding='utf-8') as f:
+                cookies = json.load(f)
+            for name, value in cookies.items():
+                self.session.cookies.set(name, value, domain='support.euserv.com')
+            logger.info(f"🍪 已加载信任设备 Cookie，登录时将跳过 PIN 验证")
+        except Exception as e:
+            logger.warning(f"⚠️ 加载 Cookie 失败: {e}")
+
     def login(self) -> bool:
-        """登录 EUserv（支持验证码和 PIN）"""
+        """登录 EUserv（支持验证码和 PIN，Cookie 持久化跳过 PIN）"""
         logger.info(f"正在登录账号: {self.config.email}")
         
         headers = {
@@ -387,7 +419,7 @@ class EUserv:
         captcha_url = "https://support.euserv.com/securimage_show.php"
         
         try:
-            # 获取 sess_id
+            # 获取 sess_id（session 里已携带 Cookie，服务器可识别为受信任设备）
             sess = self.session.get(url, headers=headers)
             sess_id_match = re.search(r'sess_id["\']?\s*[:=]\s*["\']?([a-zA-Z0-9]{30,100})["\']?', sess.text)
             if not sess_id_match:
@@ -472,7 +504,7 @@ class EUserv:
             # 处理 PIN 验证
             if 'PIN that you receive via email' in response.text:
                 self.c_id = soup.find("input", {"name": "c_id"})["value"]
-                logger.info("⚠️ 需要 PIN 验证")
+                logger.info("⚠️ 需要 PIN 验证（首次登录或 Cookie 已失效）")
                 time.sleep(3)  # 等待邮件到达
                 
                 pin = get_euserv_pin(
@@ -488,6 +520,7 @@ class EUserv:
                 
                 login_confirm_data = {
                     'pin': pin,
+                    'save_for_auto_login': 'on',
                     'sess_id': sess_id,
                     'Submit': 'Confirm',
                     'subaction': 'login',
@@ -495,6 +528,9 @@ class EUserv:
                 }
                 response = self.session.post(url, headers=headers, data=login_confirm_data)
                 response.raise_for_status()
+                # PIN 验证成功后，服务器种下信任设备 Cookie，立即持久化
+                self._save_cookies()
+                logger.info("🍪 PIN 验证完成，信任设备 Cookie 已保存，下次登录将跳过 PIN")
 
 
             # 检查登录成功
